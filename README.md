@@ -27,9 +27,12 @@
 
 ## 快速开始
 
-1. 确保 Codex 桌面客户端已经登录，并已安装 .NET Framework 4.8。
-2. 下载或克隆本仓库。
-3. 双击 `CodexMonitor.exe` 启动。
+1. 从 [Releases](https://github.com/prowk/CodexMonitor/releases/latest) 下载 `CodexMonitor-v1.0.0-win-x64.zip`。
+2. 将压缩包完整解压到一个固定目录，不要直接在压缩包内运行。
+3. 确保 Codex 桌面客户端已经登录，并已安装 .NET Framework 4.8。
+4. 双击 `CodexMonitor.exe` 启动。
+
+普通用户不需要克隆源码。若要自行构建或参与开发，再克隆本仓库即可。
 
 若 Windows 显示 SmartScreen 提示，请在确认文件来自本仓库后选择“更多信息”并继续运行。项目当前未提供代码签名。
 
