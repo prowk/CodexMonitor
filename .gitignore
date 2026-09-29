@@ -1,0 +1,13 @@
+settings.json
+error.log
+diagnostics.txt
+test-results.txt
+smoke-results.txt
+*.pdb
+
+capsule-check.png
+panel-check.png
+render-check.png
+lifecycle-results.txt
+watcher-status.txt
+memory-results.txt
