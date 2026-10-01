@@ -22,15 +22,16 @@
 - 点击胶囊任意位置，同一玻璃表面以右下角为锚点连续变形成详情面板。
 - 点击面板外部或按 Escape 收起。没有左右按钮，也没有面板收起按钮。
 - 拖动胶囊或面板可自由定位。正常模式保存相对 Codex 窗口的右侧与底部偏移，重新打开仍保留。自定义位置不再跟随输入框布局改变。
-- 右键选择 `Reset to composer right` 恢复自动右对齐。`Refresh quota` 手动刷新，`Quit` 退出。托盘菜单还可暂停显示。
+- 右键选择 `Reset to composer right` 恢复自动右对齐。`Refresh quota` 手动刷新，`Start with Windows` 开关控制登录启动，`Quit` 退出。托盘菜单也提供开关和暂停显示。
 - 正常模式仅在 Codex 前台显示，不抢输入焦点。启动默认保持小胶囊。
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/prowk/CodexMonitor/releases/latest) 下载 `CodexMonitor-v1.0.0-win-x64.zip`。
+1. 从 [Releases](https://github.com/prowk/CodexMonitor/releases/latest) 下载最新的 Windows x64 压缩包。
 2. 将压缩包完整解压到一个固定目录，不要直接在压缩包内运行。
 3. 确保 Codex 桌面客户端已经登录，并已安装 .NET Framework 4.8。
-4. 双击 `CodexMonitor.exe` 启动。
+4. 双击 `CodexMonitor.exe` 启动。主程序会自动带起守护程序，无需分别打开两个 EXE。
+5. 右键胶囊或托盘图标，勾选 **Start with Windows**，启用开机登录后自动检测 Codex。
 
 普通用户不需要克隆源码。若要自行构建或参与开发，再克隆本仓库即可。
 
@@ -38,15 +39,21 @@
 
 ## 自动启停
 
-在 PowerShell 中运行：
+推荐在胶囊右键菜单或托盘菜单中勾选 **Start with Windows**。勾选状态来自 Windows 实际登记的任务；取消勾选只影响后续登录，当前会话仍可继续监测。
+
+也可以在 PowerShell 中运行：
 
 ```powershell
 ./install-autostart.ps1
 ```
 
-原生 `CodexMonitor.Watcher.exe` 会随当前用户登录 Windows 启动，每秒检测 Codex 桌面窗口：打开 Codex 后约 1 秒内启动显示器，最后一个窗口关闭后约 3 秒内通知显示器正常退出。最小化不会触发退出，普通 ChatGPT 和 Codex CLI 不会触发启动。
+启用后，Windows 计划任务 `CodexMonitorWatcher` 在当前用户登录约 3 秒后启动原生 `CodexMonitor.Watcher.exe`，无须管理员权限或保存密码。任务指定完整程序路径、工作目录和交互会话，允许电池供电，不设运行时限，并在失败时最多重试 3 次。
 
-托盘手动 Quit 后，本次 Codex 会话不再自动拉起；下次关闭再打开 Codex 时恢复。自动启动登记在当前用户的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下，键名为 `CodexMonitorWatcher`，不会修改 Codex 文件或快捷方式。移动项目目录后需要重新运行安装脚本。
+守护程序每秒检测 Codex 桌面窗口：打开 Codex 后约 1 秒内启动显示器，最后一个窗口关闭后约 3 秒内通知显示器正常退出。最小化不会触发退出，普通 ChatGPT 和 Codex CLI 不会触发启动。
+
+托盘手动 Quit 后，本次 Codex 会话不再自动拉起；下次关闭再打开 Codex 时恢复。成功启用新计划任务后自动删除旧版的注册表 Run 启动项。移动目录后，在新目录打开主程序，重新勾选开关即可修复路径。
+
+启动诊断日志：`%LOCALAPPDATA%\CodexMonitor\watcher.log`，记录守护程序启动、显示器启动或失败及错误码，最多保留约 64 KB，不包含对话内容。
 
 取消自动启停：
 
@@ -54,7 +61,7 @@
 ./install-autostart.ps1 -Uninstall
 ```
 
-该命令会删除登录启动项，并停止守护程序和显示器。
+该命令会删除登录计划任务及旧启动项，并停止守护程序和显示器。界面开关、命令行和安装脚本共用同一实现。
 
 ## 数据与隐私
 
@@ -105,6 +112,8 @@ Windows PowerShell 5.1：
 - `--smoke-test`：短暂显示测试窗口，检查右下锚点、变形展开/收起、动画反向中断、透明边缘、原生窗口尺寸稳定性、焦点和额度，输出 `smoke-results.txt` 后退出。
 - `--preview`：视觉测试模式，始终显示并进入任务栏，不用于日常跟随。拖动位置不落盘。
 - `CodexMonitor.Watcher.exe --self-test`：使用真实测试子进程验证 9 项生命周期场景，输出 `lifecycle-results.txt`；不关闭真实 Codex。
+- `--startup-test`：创建隔离的临时计划任务，验证启用、路径校验、禁用及重复禁用，完成后删除测试任务。
+- `--autostart on|off|status`：修改或查询自动启动设置，结果输出到 `autostart-results.txt`。
 
 本轮验证：14 项逻辑检查通过；内置桌面集成检查覆盖展开/收起、动画反向中断、原生窗口不变尺寸、不重建区域、焦点保持、真实额度、胶囊和面板外缘透明度。生成的 `capsule-check.png` 与 `panel-check.png` 是 WPF 渲染输出，不是桌面截图。`smoke-results.txt` 记录绘制回调间隔（不等于显示器呈现帧率）。
 

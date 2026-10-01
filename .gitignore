@@ -11,5 +11,7 @@ render-check.png
 lifecycle-results.txt
 watcher-status.txt
 memory-results.txt
+autostart-results.txt
+autostart-test-results.txt
 
 /dist/

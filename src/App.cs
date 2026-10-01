@@ -37,6 +37,7 @@ namespace CodexMonitor {
         string lastError;double right,bottom,scale=1;
         double placedRight,placedBottom;
         bool animating;
+        bool configuringStartup;
         int transitionId;
         readonly TranslateTransform detailMotion=new TranslateTransform();
         Native.POINT pressPoint;double pressRight,pressBottom;
@@ -45,6 +46,8 @@ namespace CodexMonitor {
 
         [STAThread] public static int Main(string[] args) {
             if(args.Contains("--self-test"))return Tests.Run();
+            if(args.Contains("--startup-test"))return AutoStart.SelfTest();
+            int startup=Array.IndexOf(args,"--autostart");if(startup>=0)return AutoStart.Command(startup+1<args.Length?args[startup+1]:"status");
             bool created;
             using(var mutex=new Mutex(true,"Local\\CodexMonitor.Glass.1",out created)) {
                 if(!created)return 0;
@@ -59,7 +62,11 @@ namespace CodexMonitor {
         public MonitorApp(bool mode){preview=mode;ShutdownMode=ShutdownMode.OnExplicitShutdown;}
         protected override async void OnStartup(StartupEventArgs e) {
             base.OnStartup(e);IntPtr initial=Native.GetForegroundWindow();Build();
-            if(!preview)lifecycleStop=new EventWaitHandle(false,EventResetMode.ManualReset,"Local\\CodexMonitor.Stop.1");
+            if(!preview) {
+                lifecycleStop=new EventWaitHandle(false,EventResetMode.ManualReset,"Local\\CodexMonitor.Stop.1");lifecycleStop.Reset();
+                // 手动打开主程序也会启动守护程序，无需分别点击两个可执行文件。
+                try{AutoStart.StartWatcher();}catch(Exception failure){File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"error.log"),DateTime.Now+" Watcher: "+failure+Environment.NewLine,Encoding.UTF8);}
+            }
             follow=new DispatcherTimer {Interval=TimeSpan.FromMilliseconds(32)};follow.Tick+=delegate{Follow();};follow.Start();
             refresh=new DispatcherTimer {Interval=TimeSpan.FromSeconds(60)};refresh.Tick+=async delegate{await Refresh();};refresh.Start();
             textTimer=new DispatcherTimer {Interval=TimeSpan.FromSeconds(5)};textTimer.Tick+=delegate{UpdateText();};textTimer.Start();
@@ -137,6 +144,13 @@ namespace CodexMonitor {
             menu.Items.Add("Reset to composer right",null,delegate{Dispatcher.Invoke(new Action(ResetAnchor));});
             menu.Items.Add("Refresh quota",null,delegate{Dispatcher.Invoke(new Action(async delegate{await Refresh();}));});
             menu.Items.Add("Pause / resume",null,delegate{Dispatcher.Invoke(new Action(delegate{paused=!paused;Follow();}));});
+            var startupItem=new Forms.ToolStripMenuItem("Start with Windows");menu.Items.Add(startupItem);
+            menu.Opening+=async delegate {
+                startupItem.Enabled=false;
+                try{startupItem.Checked=await Task.Run(()=>AutoStart.IsEnabled());startupItem.ToolTipText="Start the watcher when you sign in.";startupItem.Enabled=!configuringStartup;}
+                catch{startupItem.ToolTipText="Unable to read the Windows startup setting.";}
+            };
+            startupItem.Click+=async delegate {await ChangeStartup(!startupItem.Checked);};
             menu.Items.Add("Quit",null,delegate{Dispatcher.Invoke(new Action(delegate{Shutdown();}));});tray.ContextMenuStrip=menu;
             tray.DoubleClick+=delegate{Dispatcher.Invoke(new Action(delegate{if(window.IsVisible)SetExpanded(!expanded);}));};ApplyRestState();
         }
@@ -152,7 +166,22 @@ namespace CodexMonitor {
         }
         ContextMenu Menu() {
             var m=new ContextMenu();Action<string,Action> add=delegate(string caption,Action action){var item=new MenuItem {Header=caption};item.Click+=delegate{action();};m.Items.Add(item);};
-            add("Reset to composer right",ResetAnchor);add("Refresh quota",async delegate{await Refresh();});add("Quit",delegate{Shutdown();});return m;
+            add("Reset to composer right",ResetAnchor);add("Refresh quota",async delegate{await Refresh();});
+            var startup=new MenuItem {Header="Start with Windows",IsCheckable=true,IsEnabled=false};m.Items.Add(startup);
+            bool enabled=false;
+            m.Opened+=async delegate {
+                startup.IsEnabled=false;
+                try{enabled=await Task.Run(()=>AutoStart.IsEnabled());startup.IsChecked=enabled;startup.ToolTip="Start the watcher when you sign in.";startup.IsEnabled=!configuringStartup;}
+                catch{startup.ToolTip="Unable to read the Windows startup setting.";}
+            };
+            startup.Click+=async delegate {startup.IsEnabled=false;await ChangeStartup(!enabled);};
+            add("Quit",delegate{Shutdown();});return m;
+        }
+        async Task ChangeStartup(bool enabled) {
+            if(configuringStartup)return;configuringStartup=true;
+            try{await Task.Run(()=>AutoStart.SetEnabled(enabled));tray.ShowBalloonTip(2500,"Codex Monitor",enabled?"Start with Windows enabled.":"Start with Windows disabled.",Forms.ToolTipIcon.Info);}
+            catch(Exception e){File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"error.log"),DateTime.Now+" Startup setting: "+e+Environment.NewLine,Encoding.UTF8);Forms.MessageBox.Show("Could not update the Windows startup setting. See error.log for details.","Codex Monitor");}
+            finally{configuringStartup=false;}
         }
         async Task Refresh() {
             if(reading || quitting)return;reading=true;UpdateText();

@@ -4,7 +4,7 @@ chcp 65001 > $null
 $root = $PSScriptRoot
 if ([string]::IsNullOrEmpty($root)) { $root = (Get-Location).Path }
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
-$refs = @('System.dll','System.Core.dll','System.Web.Extensions.dll','System.Drawing.dll','System.Windows.Forms.dll','WPF\WindowsBase.dll','WPF\PresentationCore.dll','WPF\PresentationFramework.dll','WPF\UIAutomationClient.dll','WPF\UIAutomationTypes.dll')
+$refs = @('System.dll','System.Core.dll','Microsoft.CSharp.dll','System.Web.Extensions.dll','System.Drawing.dll','System.Windows.Forms.dll','WPF\WindowsBase.dll','WPF\PresentationCore.dll','WPF\PresentationFramework.dll','WPF\UIAutomationClient.dll','WPF\UIAutomationTypes.dll')
 $argsList = @('/nologo','/target:winexe','/platform:x64','/optimize+','/codepage:65001',('/out:' + (Join-Path $root 'CodexMonitor.exe')),('/win32manifest:' + (Join-Path $root 'app.manifest')))
 foreach ($ref in $refs) { $argsList += '/reference:' + (Join-Path $framework $ref) }
 $argsList += '/reference:' + (Join-Path $framework 'System.Xaml.dll')

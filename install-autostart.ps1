@@ -5,17 +5,18 @@ chcp 65001 > $null
 $root = $PSScriptRoot
 if ([string]::IsNullOrEmpty($root)) { $root = (Get-Location).Path }
 $watcher = Join-Path $root 'CodexMonitor.Watcher.exe'
-$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$name = 'CodexMonitorWatcher'
+$monitor = Join-Path $root 'CodexMonitor.exe'
+if (!(Test-Path -LiteralPath $watcher) -or !(Test-Path -LiteralPath $monitor)) { throw '请先运行 build.ps1。' }
+# 与界面的开关共用同一份实现，避免脚本和菜单各自维护不同的启动项。
+$mode = if ($Uninstall) { 'off' } else { 'on' }
+$change = Start-Process -FilePath $monitor -ArgumentList @('--autostart', $mode) -WorkingDirectory $root -WindowStyle Hidden -PassThru
+# 只等待设置命令本身；Start-Process -Wait 会连同常驻的守护子进程一起等待。
+$change.WaitForExit()
+$result = Join-Path $root 'autostart-results.txt'
+if ($change.ExitCode -ne 0) { throw (Get-Content -LiteralPath $result -Encoding UTF8 -Raw) }
 if ($Uninstall) {
-    # 仅删除本工具创建的当前用户登录项。
-    Remove-ItemProperty -LiteralPath $key -Name $name -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $watcher) { Start-Process -FilePath $watcher -ArgumentList '--stop' -WindowStyle Hidden -Wait }
+    Start-Process -FilePath $watcher -ArgumentList '--stop' -WindowStyle Hidden -Wait
     Write-Output '已取消自动启停。'
 } else {
-    if (!(Test-Path -LiteralPath $watcher) -or !(Test-Path -LiteralPath (Join-Path $root 'CodexMonitor.exe'))) { throw '请先运行 build.ps1。' }
-    if (!(Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
-    New-ItemProperty -LiteralPath $key -Name $name -Value ('"' + $watcher + '"') -PropertyType String -Force | Out-Null
-    Start-Process -FilePath $watcher -WorkingDirectory $root -WindowStyle Hidden
-    Write-Output '已启用 Codex 自动启停，并设置当前用户登录时启动守护程序。'
+    Write-Output '已启用 Codex 自动启停，登录计划任务已保存。'
 }

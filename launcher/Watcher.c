@@ -5,6 +5,7 @@
 #define _WIN32_WINNT 0x0601
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <wchar.h>
 #include <wctype.h>
 #include <stdio.h>
@@ -15,6 +16,24 @@ static const wchar_t *watcherStopName=L"Local\\CodexMonitor.Watcher.Stop.1";
 static const wchar_t *monitorMutex=L"Local\\CodexMonitor.Glass.1";
 static wchar_t folder[32768], executable[32768];
 typedef struct { BOOL active,probe; unsigned missing; HANDLE stop,child; const wchar_t *eventName; } Session;
+
+static DWORD Log(const wchar_t *message,DWORD error) {
+    // 日志只记录启动状态和错误码，放在当前用户目录，限制为约 64 KB。
+    wchar_t path[32768];
+    HRESULT folderResult=SHGetFolderPathW(NULL,CSIDL_LOCAL_APPDATA,NULL,SHGFP_TYPE_CURRENT,path);
+    if(FAILED(folderResult))return (DWORD)folderResult;
+    wcscat(path,L"\\CodexMonitor");CreateDirectoryW(path,NULL);wcscat(path,L"\\watcher.log");
+    HANDLE file=CreateFileW(path,FILE_APPEND_DATA|FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(file==INVALID_HANDLE_VALUE)return GetLastError();
+    LARGE_INTEGER size;if(GetFileSizeEx(file,&size) && size.QuadPart>65536) {
+        CloseHandle(file);file=CreateFileW(path,GENERIC_WRITE,FILE_SHARE_READ,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+        if(file==INVALID_HANDLE_VALUE)return GetLastError();
+    }
+    SYSTEMTIME time;GetLocalTime(&time);wchar_t line[512];
+    swprintf(line,512,L"%04u-%02u-%02u %02u:%02u:%02u pid=%lu %ls error=%lu\r\n",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,GetCurrentProcessId(),message,error);
+    char utf8[2048];int length=WideCharToMultiByte(CP_UTF8,0,line,-1,utf8,2048,NULL,NULL);DWORD written;
+    DWORD result=0;if(length<=1 || !WriteFile(file,utf8,(DWORD)length-1,&written,NULL))result=GetLastError();CloseHandle(file);return result;
+}
 
 static BOOL CALLBACK FindDesktop(HWND hwnd,LPARAM result) {
     if(!IsWindowVisible(hwnd) || GetWindow(hwnd,GW_OWNER))return TRUE;
@@ -39,7 +58,7 @@ static BOOL DesktopOpen(void){BOOL found=FALSE;EnumWindows(FindDesktop,(LPARAM)&
 static BOOL StartMonitor(Session *session) {
     if(!session->probe) {
         HANDLE existing=OpenMutexW(SYNCHRONIZE,FALSE,monitorMutex);
-        if(existing){CloseHandle(existing);return TRUE;}
+        if(existing){CloseHandle(existing);Log(L"Adopted running monitor",0);return TRUE;}
     }
     wchar_t path[32768],command[32768];
     if(session->probe)wcscpy(path,executable);
@@ -48,7 +67,8 @@ static BOOL StartMonitor(Session *session) {
     else swprintf(command,32768,L"\"%ls\"",path);
     STARTUPINFOW startup={0};PROCESS_INFORMATION process={0};startup.cb=sizeof(startup);
     startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;
-    if(!CreateProcessW(path,command,NULL,NULL,FALSE,CREATE_NO_WINDOW,NULL,folder,&startup,&process))return FALSE;
+    if(!CreateProcessW(path,command,NULL,NULL,FALSE,CREATE_NO_WINDOW,NULL,folder,&startup,&process)){if(!session->probe)Log(L"Monitor launch failed",GetLastError());return FALSE;}
+    if(!session->probe)Log(L"Monitor launched",0);
     CloseHandle(process.hThread);
     if(session->child)CloseHandle(session->child);
     session->child=process.hProcess;return TRUE;
@@ -63,6 +83,7 @@ static void Tick(Session *session,BOOL open) {
             session->active=StartMonitor(session);
         }
     }else if(++session->missing>=3) {
+        if(session->active && !session->probe)Log(L"Codex closed; stopping monitor",0);
         session->missing=3;SetEvent(session->stop);session->active=FALSE;
     }
 }
@@ -93,6 +114,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     GetModuleFileNameW(NULL,executable,32768);wcscpy(folder,executable);
     wchar_t *slash=wcsrchr(folder,L'\\');if(slash)*slash=0;
     int argc=0;wchar_t **argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(argc==2 && wcscmp(argv[1],L"--log-test")==0){LocalFree(argv);return (int)Log(L"Startup log verified",0);}
     if(argc==3 && wcscmp(argv[1],L"--probe-event")==0) {
         HANDLE stop=OpenEventW(SYNCHRONIZE,FALSE,argv[2]);LocalFree(argv);
         if(!stop)return 1;DWORD result=WaitForSingleObject(stop,10000);CloseHandle(stop);return result==WAIT_OBJECT_0?0:1;
@@ -109,13 +131,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     }
     LocalFree(argv);
     HANDLE mutex=CreateMutexW(NULL,TRUE,L"Local\\CodexMonitor.Watcher.1");
-    if(!mutex)return 1;if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);return 0;}
+    if(!mutex){Log(L"Watcher mutex failed",GetLastError());return 1;}if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);return 0;}
     HANDLE quit=CreateEventW(NULL,TRUE,FALSE,watcherStopName);
     Session session={0};session.stop=CreateEventW(NULL,TRUE,FALSE,stopName);
-    if(!quit || !session.stop)return 1;
+    if(!quit || !session.stop){Log(L"Watcher event failed",GetLastError());return 1;}
+    Log(L"Watcher started; waiting for Codex",0);
     ResetEvent(quit);
     do { Tick(&session,DesktopOpen()); }while(WaitForSingleObject(quit,1000)==WAIT_TIMEOUT);
     // 停止守护程序时也让显示器正常退出，以便更新和卸载。
     SetEvent(session.stop);if(session.child)CloseHandle(session.child);
+    Log(L"Watcher stopped",0);
     CloseHandle(session.stop);CloseHandle(quit);ReleaseMutex(mutex);CloseHandle(mutex);return 0;
 }
